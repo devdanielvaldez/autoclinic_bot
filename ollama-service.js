@@ -2,7 +2,7 @@ const axios = require('axios');
 
 class OllamaService {
   constructor() {
-    this.baseURL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+    this.baseURL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
     this.conversations = new Map(); // Almacena el contexto por usuario
     this.awaitingConfirmationCode = new Map(); // Usuarios que están esperando proporcionar código
   }
