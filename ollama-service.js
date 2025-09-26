@@ -222,7 +222,7 @@ Este código lo recibiste cuando agendaste tu cita y tiene el formato: *AC406869
       const prompt = await this.generatePrompt(userMessage, companyInfo, washPackages, userContext, isAwaitingCode);
 
       const response = await axios.post(`${this.baseURL}/api/generate`, {
-        model: 'deepseek-r1:latest',
+        model: 'gemma2:2b',
         prompt: prompt,
         stream: false,
         options: {
