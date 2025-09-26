@@ -12,7 +12,8 @@ ollamaService.loadConversations();
 
 // Configuración del bot
 const BOT_TOGGLE_WORD = process.env.BOT_TOGGLE_WORD || 'botoff';
-const activeChats = new Set(); // Chats donde el bot está activo
+const inactiveChats = new Set(); // Chats donde el bot está INACTIVO
+const ADMIN_PHONE = process.env.ADMIN_PHONE || '1234567890@c.us'; // Tu número de admin
 
 class WhatsAppBot {
   constructor() {
@@ -61,11 +62,12 @@ class WhatsAppBot {
     this.client.on('ready', () => {
       console.log('✅ Bot de WhatsApp conectado correctamente');
       console.log('🤖 Auto Clinic RD Bot está listo para recibir mensajes');
+      console.log('📱 Todos los usuarios están HABILITADOS por defecto');
+      console.log(`👑 Admin: ${ADMIN_PHONE}`);
     });
 
     // Mensajes entrantes
     this.client.on('message', async (message) => {
-        // console.log(message);
       await this.handleMessage(message);
     });
 
@@ -84,7 +86,7 @@ class WhatsAppBot {
     if (message.fromMe) return;
 
     const phone = message.from;
-    const body = message.body.trim().toLowerCase();
+    const body = message.body.trim();
     const hasMedia = message.hasMedia;
 
     // Guardar mensaje del usuario en Firebase
@@ -96,34 +98,127 @@ class WhatsAppBot {
       return;
     }
 
-    // Verificar palabra de toggle
-    if (body === BOT_TOGGLE_WORD) {
-      await this.handleToggle(phone, message);
-      return;
+    // Verificar si es un comando del ADMIN
+    if (phone === ADMIN_PHONE) {
+      const handled = await this.handleAdminCommand(phone, body, message);
+      if (handled) return;
     }
 
-    // Verificar si el bot está activo en este chat
-    if (!activeChats.has(phone)) {
-        console.log('esta inactivo')
-      return; // No responder si el bot está desactivado
+    // Verificar si el bot está INACTIVO en este chat
+    if (inactiveChats.has(phone)) {
+      console.log(`❌ Bot INACTIVO para: ${phone} - Ignorando mensaje`);
+      return; // No responder si el bot está desactivado para este usuario
+    }
+
+    // Verificar palabra de toggle desde el USUARIO (para activar/desactivar)
+    if (body.toLowerCase() === BOT_TOGGLE_WORD) {
+      await this.handleUserToggle(phone, message);
+      return;
     }
 
     // Simular typing
     await this.simulateTyping(phone);
 
-    // Procesar mensaje
-    await this.processMessage(phone, body, message);
+    // Procesar mensaje (todos los usuarios están habilitados por defecto)
+    await this.processMessage(phone, body.toLowerCase(), message);
   }
 
-  async handleToggle(phone, message) {
-    if (activeChats.has(phone)) {
-      activeChats.delete(phone);
-      await message.reply('🤖 *Bot desactivado*\n\nEl bot ha sido desactivado. Escribe "*botoff*" nuevamente para reactivarlo.');
-      console.log(`❌ Bot desactivado para: ${phone}`);
+  // Manejar comandos del ADMIN
+  async handleAdminCommand(adminPhone, body, message) {
+    const parts = body.split(' ');
+    const command = parts[0].toLowerCase();
+
+    // Comando para desactivar bot para un usuario específico
+    if (command === '/disable' && parts.length > 1) {
+      const targetPhone = parts[1];
+      await this.deactivateBotForUser(targetPhone);
+      await message.reply(`✅ Bot desactivado para usuario: ${targetPhone}`);
+      return true;
+    }
+
+    // Comando para activar bot para un usuario específico
+    if (command === '/enable' && parts.length > 1) {
+      const targetPhone = parts[1];
+      await this.activateBotForUser(targetPhone);
+      await message.reply(`✅ Bot activado para usuario: ${targetPhone}`);
+      return true;
+    }
+
+    // Comando para ver estado de un usuario
+    if (command === '/status' && parts.length > 1) {
+      const targetPhone = parts[1];
+      const status = this.isBotEnabledForUser(targetPhone) ? 'ACTIVADO' : 'DESACTIVADO';
+      await message.reply(`📊 Estado para ${targetPhone}: ${status}`);
+      return true;
+    }
+
+    // Comando para lista de usuarios desactivados
+    if (command === '/listdisabled') {
+      if (inactiveChats.size === 0) {
+        await message.reply('📋 No hay usuarios desactivados');
+      } else {
+        const disabledList = Array.from(inactiveChats).join('\n');
+        await message.reply(`📋 Usuarios desactivados (${inactiveChats.size}):\n${disabledList}`);
+      }
+      return true;
+    }
+
+    // Comando de ayuda para admin
+    if (command === '/help') {
+      const helpMessage = `👑 *Comandos de Administración*
+
+*/disable [número]* - Desactivar bot para usuario
+*/enable [número]* - Activar bot para usuario  
+*/status [número]* - Ver estado de usuario
+*/listdisabled* - Listar usuarios desactivados
+*/help* - Mostrar esta ayuda
+
+*Ejemplo:* /disable 1234567890@c.us`;
+      await message.reply(helpMessage);
+      return true;
+    }
+
+    return false;
+  }
+
+  // Función para que el ADMIN desactive el bot para un usuario específico
+  async deactivateBotForUser(phone) {
+    inactiveChats.add(phone);
+    console.log(`🔕 Bot desactivado por ADMIN para usuario: ${phone}`);
+    
+    try {
+      const chat = await this.client.getChatById(phone);
+      await chat.sendMessage('🤖 *Bot desactivado*\n\nEl servicio de asistencia automática ha sido desactivado temporalmente. Para atención personalizada, contacta a nuestro equipo al *809-244-0055*.');
+    } catch (error) {
+      console.error('Error enviando mensaje de desactivación:', error);
+    }
+  }
+
+  // Función para que el ADMIN active el bot para un usuario específico
+  async activateBotForUser(phone) {
+    inactiveChats.delete(phone);
+    console.log(`🔔 Bot activado por ADMIN para usuario: ${phone}`);
+    
+    try {
+      const chat = await this.client.getChatById(phone);
+      await chat.sendMessage('🤖 *Bot reactivado*\n\n¡Hola! El servicio de asistencia automática ha sido reactivado. ¿En qué puedo ayudarte?');
+    } catch (error) {
+      console.error('Error enviando mensaje de activación:', error);
+    }
+  }
+
+  // Manejar toggle desde el USUARIO
+  async handleUserToggle(phone, message) {
+    if (inactiveChats.has(phone)) {
+      // Reactivar el bot (si el admin no lo ha desactivado permanentemente)
+      inactiveChats.delete(phone);
+      await message.reply('🤖 *Bot reactivado*\n\n¡Hola de nuevo! El bot ha sido reactivado. ¿En qué puedo ayudarte?');
+      console.log(`✅ Bot reactivado por usuario: ${phone}`);
     } else {
-      activeChats.add(phone);
-      await this.sendWelcomeMessage(message);
-      console.log(`✅ Bot activado para: ${phone}`);
+      // Desactivar el bot
+      inactiveChats.add(phone);
+      await message.reply('🤖 *Bot desactivado*\n\nEl bot ha sido desactivado. Escribe "*botoff*" nuevamente cuando quieras reactivarlo.');
+      console.log(`❌ Bot desactivado por usuario: ${phone}`);
     }
   }
 
@@ -143,19 +238,19 @@ class WhatsAppBot {
   async processMessage(phone, body, message) {
     try {
       // Menú principal
-      if (body === '1' || body.includes('reservacion') || body.includes('reserva')) {
+      if (body === '1' || body.includes('reservacion') || body.includes('reserva') || body.includes('agendar')) {
         await this.handleCreateBooking(message);
       }
-      else if (body === '2' || body.includes('estado') || body.includes('consultar')) {
+      else if (body === '2' || body.includes('estado') || body.includes('consultar') || body.includes('codigo')) {
         await this.handleCheckBooking(message);
       }
-      else if (body === '3' || body.includes('servicio') || body.includes('paquete')) {
+      else if (body === '3' || body.includes('servicio') || body.includes('paquete') || body.includes('precio')) {
         await this.handleServices(message);
       }
-      else if (body === '4' || body.includes('representante') || body.includes('humano')) {
+      else if (body === '4' || body.includes('representante') || body.includes('humano') || body.includes('ia')) {
         await this.handleRepresentative(message);
       }
-      else if (body === '5' || body.includes('ubicacion') || body.includes('contacto')) {
+      else if (body === '5' || body.includes('ubicacion') || body.includes('contacto') || body.includes('direccion') || body.includes('horario')) {
         await this.handleLocation(message);
       }
       else if (body === 'menu' || body === 'help' || body === 'ayuda' || body === '0') {
@@ -228,20 +323,11 @@ Una vez en la página, haz clic en "Agendar Cita" en el paquete que prefieras.
     // Primero pedir el código
     const askCodeMessage = `🔍 *Consultar Estado de Reservación*
 
-Por favor, escribe tu *código de confirmación* (ejemplo: AC20240115ABCD) para consultar el estado de tu reservación.
+Por favor, escribe tu *código de confirmación* (ejemplo: AC40686909Z3HM) para consultar el estado de tu reservación.
 
 Este código lo recibiste al completar tu reserva en nuestro portal web.`;
 
     await message.reply(askCodeMessage);
-
-    // Esperar respuesta con el código
-    this.waitForConfirmationCode(message.from);
-  }
-
-  async waitForConfirmationCode(phone) {
-    // Este es un ejemplo simplificado - en producción necesitarías un sistema más robusto
-    // para manejar conversaciones de múltiples pasos
-    console.log(`Esperando código de confirmación de: ${phone}`);
   }
 
   async handleServices(message) {
@@ -295,7 +381,6 @@ Puedes preguntarme sobre:
   }
 
   async handleLocation(message) {
-    console.log(this.companyInfo);
     if (!this.companyInfo) {
       await message.reply('❌ No pude cargar la información de contacto en este momento.');
       return;
@@ -324,48 +409,26 @@ https://maps.app.goo.gl/gVPfDAz1Xr79k1Xi9
 *🚗 ¡Te esperamos!*`;
 
     await message.reply(locationMessage);
-
-    // También enviar la ubicación como mensaje de ubicación
-    try {
-      const locationMedia = MessageMedia.fromFilePath('./assets/location.jpg'); // Puedes tener una imagen por defecto
-      await message.reply(locationMedia, undefined, { caption: '📍 Nuestra ubicación en Google Maps' });
-    } catch (error) {
-      console.log('No se pudo enviar la imagen de ubicación');
-    }
   }
 
-  // Mejorar la función looksLikeConfirmationCode existente
-looksLikeConfirmationCode(text) {
-  // Patrón para códigos de confirmación (ej: AC20240115ABCD)
-  const confirmationPattern = /^AC\d{8}[A-Z]{4}$/i;
-  
-  // También aceptar códigos sin el prefijo AC (por si el usuario solo escribe la parte numérica)
-  const numericPattern = /^\d{8}[A-Z]{4}$/i;
-  const shortPattern = /^[A-Z0-9]{12,16}$/i; // Patrón más flexible
-  
-  return confirmationPattern.test(text.toUpperCase()) || 
-         numericPattern.test(text.toUpperCase()) ||
-         shortPattern.test(text.toUpperCase());
-}
-
-// Función para normalizar códigos de confirmación
-normalizeConfirmationCode(text) {
-  const upperText = text.toUpperCase().trim();
-  
-  // Si ya tiene formato AC, devolverlo tal cual
-  if (upperText.startsWith('AC')) {
+  // Función para normalizar códigos de confirmación
+  normalizeConfirmationCode(text) {
+    const upperText = text.toUpperCase().trim();
+    
+    // Si ya tiene formato AC, devolverlo tal cual
+    if (upperText.startsWith('AC')) {
+      return upperText;
+    }
+    
+    // Si es solo la parte numérica, agregar el prefijo AC
+    if (/^\d{8}[A-Z]{4}$/.test(upperText)) {
+      return 'AC' + upperText;
+    }
+    
     return upperText;
   }
-  
-  // Si es solo la parte numérica, agregar el prefijo AC
-  if (/^\d{8}[A-Z]{4}$/.test(upperText)) {
-    return 'AC' + upperText;
-  }
-  
-  return upperText;
-}
 
-async handleAIConversation(phone, userMessage, message) {
+  async handleAIConversation(phone, userMessage, message) {
     try {
       // Primero verificar si es un código de confirmación o si debemos procesar uno
       if (userMessage.startsWith('PROCESAR_CODIGO:')) {
@@ -452,16 +515,16 @@ async handleAIConversation(phone, userMessage, message) {
     }
   }
 
-// Actualizar la función looksLikeConfirmationCode en bot.js
-looksLikeConfirmationCode(text) {
-  // Patrón para códigos como AC40686909Z3HM (AC + 12 caracteres alfanuméricos)
-  const confirmationPattern = /^AC[A-Z0-9]{12}$/i;
-  // También aceptar sin el AC (12 caracteres alfanuméricos)
-  const shortPattern = /^[A-Z0-9]{12}$/i;
-  
-  return confirmationPattern.test(text.toUpperCase()) || 
-         shortPattern.test(text.toUpperCase());
-}
+  // Actualizar la función looksLikeConfirmationCode
+  looksLikeConfirmationCode(text) {
+    // Patrón para códigos como AC40686909Z3HM (AC + 12 caracteres alfanuméricos)
+    const confirmationPattern = /^AC[A-Z0-9]{12}$/i;
+    // También aceptar sin el AC (12 caracteres alfanuméricos)
+    const shortPattern = /^[A-Z0-9]{12}$/i;
+    
+    return confirmationPattern.test(text.toUpperCase()) || 
+           shortPattern.test(text.toUpperCase());
+  }
 
   async sendBookingStatus(message, booking) {
     const statusEmojis = {
@@ -507,10 +570,18 @@ ${booking.notes ? `*Notas:* ${booking.notes}\n` : ''}
   }
 
   formatDate(date) {
-    if (date.toDate) {
+    if (date && date.toDate) {
       return date.toDate().toLocaleDateString('es-DO');
     }
-    return new Date(date).toLocaleDateString('es-DO');
+    if (date) {
+      return new Date(date).toLocaleDateString('es-DO');
+    }
+    return 'Fecha no especificada';
+  }
+
+  // Verificar si el bot está activo para un usuario
+  isBotEnabledForUser(phoneNumber) {
+    return !inactiveChats.has(phoneNumber);
   }
 }
 
